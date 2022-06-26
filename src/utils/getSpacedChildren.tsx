@@ -1,5 +1,6 @@
 import React from 'react';
 import { default as Box } from '../components/primitives/Box';
+import type { IBoxProps } from '../components/primitives/Box';
 import type { SpaceType as ThemeSpaceType } from '../components/types';
 import { ResponsiveQueryContext } from './useResponsiveQuery/ResponsiveQueryProvider';
 
@@ -14,77 +15,105 @@ type SpaceType =
   | '2xl'
   | ThemeSpaceType;
 
-// Thanks @gregberge for code and @nandorojo for suggestion.
-// Original source: https://github.com/gregberge/react-flatten-children
+// References:
+// - https://github.com/gregberge/react-flatten-children
+// - https://github.com/grrowl/react-keyed-flatten-children
+
 type ReactChildArray = ReturnType<typeof React.Children.toArray>;
-function flattenChildren(children: React.ReactNode): ReactChildArray {
-  const childrenArray = React.Children.toArray(children);
-  return childrenArray.reduce((flatChildren: ReactChildArray, child) => {
-    if ((child as React.ReactElement<any>).type === React.Fragment) {
-      return flatChildren.concat(
-        flattenChildren((child as React.ReactElement<any>).props.children)
-      );
+function flattenChildrenAndAddSpaces(
+  children: React.ReactNode | React.ReactNode[],
+  spacer: JSX.Element,
+  keys: string[] = []
+): ReactChildArray {
+  const flatChildren: ReactChildArray = [];
+  React.Children.forEach(children, (child: React.ReactNode, index: number) => {
+    if (typeof child === 'undefined' || child === null) {
+      return;
     }
-    flatChildren.push(child);
-    return flatChildren;
-  }, []);
+
+    const newKeys = keys.concat(
+      String((child as React.ReactElement<any>).key || index)
+    );
+
+    // flatten children
+    if ((child as React.ReactElement<any>).type === React.Fragment) {
+      flatChildren.concat(
+        flattenChildrenAndAddSpaces(
+          (child as React.ReactElement<any>).props.children,
+          spacer,
+          newKeys
+        )
+      );
+    } else if (React.isValidElement(child)) {
+      flatChildren.push(
+        React.cloneElement(child, {
+          key: newKeys.join('.'),
+        })
+      );
+    } else {
+      flatChildren.push(child);
+    }
+
+    // add space
+    flatChildren.push(
+      React.cloneElement(spacer, {
+        key: `spaced-child.${newKeys.join('.')}`,
+      })
+    );
+  });
+
+  // one extra space got added at the end, lets remove it
+  if (flatChildren.length > 1) {
+    flatChildren.pop();
+  }
+
+  return flatChildren;
 }
 
 const getSpacedChildren = (
-  children: JSX.Element[] | JSX.Element,
+  children: React.ReactNode | React.ReactNode[],
   space: undefined | SpaceType,
   axis: 'X' | 'Y',
   reverse: string,
   divider: JSX.Element | undefined
-): any => {
-  let childrenArray = React.Children.toArray(flattenChildren(children));
-  childrenArray =
-    reverse === 'reverse' ? [...childrenArray].reverse() : childrenArray;
-
-  const orientation = axis === 'X' ? 'vertical' : 'horizontal';
+): React.ReactNode | React.ReactNode[] => {
+  if (!space && !divider) {
+    return children;
+  }
 
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const responsiveQueryContext = React.useContext(ResponsiveQueryContext);
   const disableCSSMediaQueries = responsiveQueryContext.disableCSSMediaQueries;
 
-  // If there's a divider, we wrap it with a Box and apply vertical and horizontal margins else we add a spacer Box with height or width
-  if (divider) {
-    const spacingProp: object = {
-      ...(axis === 'X' ? { mx: space } : { my: space }),
-    };
-
-    divider = React.cloneElement(divider, {
-      orientation,
-      ...spacingProp,
-    });
-
-    childrenArray = childrenArray.map((child: any, index: number) => {
-      return (
-        <React.Fragment key={child.key ?? `spaced-child-${index}`}>
-          {child}
-          {index < childrenArray.length - 1 && divider}
-        </React.Fragment>
-      );
-    });
-  } else {
-    const spacingProp: object = {
-      ...(axis === 'X' ? { width: space } : { height: space }),
-    };
-    childrenArray = childrenArray.map((child: any, index: number) => {
-      return (
-        <React.Fragment key={child.key ?? `spaced-child-${index}`}>
-          {child}
-          {disableCSSMediaQueries ? (
-            index < childrenArray.length - 1 && <Box {...spacingProp} />
-          ) : (
-            <></>
-          )}
-        </React.Fragment>
-      );
-    });
+  if (!disableCSSMediaQueries && !divider) {
+    return children;
   }
 
-  return childrenArray;
+  let spacer: JSX.Element;
+
+  // If there's a divider,
+  // we wrap it with a Box and apply vertical and horizontal margins
+  // else we add a spacer Box with height or width
+  if (divider) {
+    const orientation = axis === 'X' ? 'vertical' : 'horizontal';
+    const spacingProps: IBoxProps =
+      axis === 'X' ? { mx: space } : { my: space };
+    spacer = React.cloneElement(divider, {
+      orientation,
+      ...spacingProps,
+    });
+  } else {
+    const spacingProps: IBoxProps =
+      axis === 'X' ? { width: space } : { height: space };
+    spacer = <Box {...spacingProps} />;
+  }
+
+  const spacedChildren = flattenChildrenAndAddSpaces(children, spacer);
+
+  if (reverse === 'reverse') {
+    return spacedChildren.reverse();
+  }
+  return spacedChildren;
 };
 
 export default getSpacedChildren;
